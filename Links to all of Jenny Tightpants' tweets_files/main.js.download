@@ -1,0 +1,287 @@
+/**
+  All My Tweets 
+  © 2020 Airtight Interactive.
+  www.airtight.cc
+  v1.2.0
+ */
+
+var _loadedCount;
+var _screenName;
+var _hideRetweets;
+var _hideReplies;
+var _maxId;
+var _req;
+var _lastUserId;
+
+$(document).ready(function () {
+  $('#change-user-btn').click(changeUser);
+  $('#load-user-btn').click(loadUser);
+  $('#tweets-btn').click(loadTweets);
+  $('#likes-btn').click(loadLikes);
+  $('#timeline-btn').click(loadTimeline);
+  $('#followers-btn').click(loadFollowers);
+  $('#following-btn').click(loadFollowing);
+
+  $('#input-name').keyup(function (e) {
+    if (e.keyCode == 13) {
+      loadUser();
+    }
+  });
+});
+
+function loadUser() {
+  $('#user-status').css('visibility', 'hidden');
+  //massage username input
+  var SCRIPT_REGEX = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi;
+  _screenName = $('#input-name').val().replace(SCRIPT_REGEX, '');
+  _screenName = _screenName.replace('@', '');
+  if (_screenName === '') return;
+
+  //get profile img + check if user exists
+  var qurl = 'get_icon.php?screen_name=' + _screenName;
+  $.get(qurl, function (data) {
+    data_obj = jQuery.parseJSON(data);
+    if (data_obj.errors || data_obj.error) {
+      $('#user-status').css('visibility', 'visible');
+      return;
+    } else {
+      onUserLoaded(data_obj);
+    }
+  });
+}
+
+function onUserLoaded(data) {
+  var user = data[0];
+  if (user) {
+    $('#user-img').css('background-image', 'url(' + user.profile_image_url_https + ')');
+    let locStr = '';
+    if (user.location) {
+      locStr = `| <img src='./img/location.svg'></img> ${user.location}`;
+    }
+    $('#user-detail').html(`<b>${user.name}</b> | ${user.followers_count} followers ${locStr}`);
+  }
+  $('#user-name').html('@' + _screenName);
+
+  if (user.protected) {
+    $('#load-status').text('Protected User.');
+  } else {
+    $('#load-status').hide();
+    $('#view-menu').show();
+  }
+
+  $('#input-form').hide();
+  $('#user-profile').show();
+  $('.intro').hide();
+  $('#profile-img').show();
+  $('#loader').hide();
+
+  //hide timeline button if different user than authed
+  if (_authName === _screenName) {
+    $('#timeline-btn').show();
+  } else {
+    $('#timeline-btn').hide();
+  }
+}
+
+function loadTweets() {
+  clearResults();
+  $('#load-status').text('loading tweets');
+  getTweetPage('tweets');
+}
+
+function loadTimeline() {
+  clearResults();
+  $('#load-status').text('loading timeline');
+  getTweetPage('timeline');
+}
+
+function loadLikes() {
+  clearResults();
+  $('#load-status').text('loading likes');
+  getTweetPage('likes');
+}
+function loadFollowing() {
+  clearResults();
+  $('#load-status').text('loading following');
+  getUserPage(true, -1);
+}
+
+function loadFollowers() {
+  clearResults();
+  $('#load-status').text('loading followers');
+  getUserPage(false, -1);
+}
+
+function clearResults() {
+  $('#results ul').empty();
+  $('#load-status').show();
+  $('#loader').show();
+  _lastUserId = 0;
+  _loadedCount = 0;
+  _maxId = -1;
+  //cancel previous search
+  if (_req) _req.abort();
+}
+
+function getUserPage(followingMode, nextCursor) {
+  var qurl = followingMode ? 'get_following.php' : 'get_followers.php';
+
+  qurl +=
+    '?skip_status=true&include_user_entities=false&count=200&screen_name=' + _screenName + '&cursor=' + nextCursor;
+
+  //console.log(qurl);
+
+  _req = $.get(qurl, function (data) {
+    data_obj = jQuery.parseJSON(data);
+
+    //console.log(data_obj);
+
+    if (data_obj.errors) {
+      console.log('ERROR: ' + data_obj.errors[0].message);
+      $('#load-status').text(data_obj.errors[0].message);
+      $('#loader').hide();
+      return;
+    }
+
+    if (data_obj.error) {
+      console.log('ERROR: ' + data_obj.error);
+      $('#load-status').text(data_obj.error);
+      $('#loader').hide();
+      return;
+    }
+
+    //ignore duplicate users
+    if (data_obj.users.length > 0 && data_obj.users[0].id_str === _lastUserId) {
+      data_obj.users.shift();
+    }
+
+    //render users
+    $.each(data_obj.users, function (i, user) {
+      let urlStr = '';
+      if (user.url) {
+        //let cleanUrl = user.url.replace(/(^\w+:|^)\/\//, "");
+        urlStr = `| <a target='_blank' href='${user.url}'>  <img src='./img/link.svg'></img> website </a>`;
+      }
+      let locStr = '';
+      if (user.location) {
+        locStr = `| <img src='./img/location.svg'></img> ${user.location}`;
+      }
+
+      $('#results ul').append(
+        `<li class='user-item'>
+          <div class='profile-img-sml' style="background-image: url(${user.profile_image_url_https})"></div>
+          <b>${user.name}</b> | <a target='_blank' href='https://twitter.com/${user.screen_name}' > @${user.screen_name} </a> |
+          ${user.followers_count} followers ${urlStr} ${locStr} 
+        </li>`
+      );
+
+      _lastUserId = user.id_str;
+    });
+
+    var txt = followingMode ? ' following' : ' followers';
+    _loadedCount += data_obj.users.length;
+    $('#load-status').text('loaded ' + _loadedCount + txt);
+    if (data_obj.next_cursor !== 0) {
+      getUserPage(followingMode, data_obj.next_cursor);
+    } else {
+      //done
+      $('#loader').hide();
+      if (_loadedCount === 0) $('#load-status').text('no ' + txt + ' found');
+    }
+  });
+}
+
+//type can be 'tweets', 'timeline' or 'likes'
+function getTweetPage(type) {
+  var maxidStr = _maxId > 0 ? '&max_id=' + _maxId : '';
+
+  var qurl = 'get_' + type + '.php';
+
+  qurl += '?count=200&tweet_mode=extended&trim_user&screen_name=' + _screenName + maxidStr;
+
+  //console.log(qurl);
+
+  _req = $.get(qurl, function (data) {
+    data_obj = jQuery.parseJSON(data);
+
+    //console.log(data_obj);
+
+    if (data_obj.errors) {
+      console.log('ERROR: ' + data_obj.errors[0].message);
+      $('#load-status').text(data_obj.errors[0].message);
+      $('#loader').hide();
+      return;
+    }
+
+    if (data_obj.error) {
+      console.log('ERROR: ' + data_obj.error);
+      $('#load-status').text(data_obj.error);
+      $('#loader').hide();
+      return;
+    }
+
+    //ignore duplicate first item when using max_id
+    if (data_obj.length > 0 && data_obj[0].id == _maxId) {
+      data_obj.shift();
+    }
+
+    //render tweets
+    $.each(data_obj, function (i, item) {
+      //save maxId
+      _maxId = item.id;
+
+      var usrStr = '';
+      if (type !== 'tweets') {
+        usrStr = `<b>${item.user.name}</b> | <span class="grey"><a target='_blank'  href='https://twitter.com/${item.user.screen_name}' > @${item.user.screen_name} </a></span> : `;
+      }
+
+      $('#results ul').append(
+        '<li>' +
+          usrStr +
+          item.full_text +
+          " <a target='_blank' href='https://twitter.com/" +
+          _screenName +
+          '/status/' +
+          item.id_str +
+          "'> <span class='grey'>" +
+          format_time(item.created_at) +
+          "</span> <img src='img/extlink.png'></img></a></li>"
+      );
+    });
+
+    $('#results ul').linkify({ target: '_blank' });
+
+    var txt = ' tweets';
+    if (data_obj.length > 1) {
+      _loadedCount += data_obj.length;
+      getTweetPage(type);
+      $('#load-status').text('loaded ' + _loadedCount + txt);
+    } else {
+      //done
+      $('#loader').hide();
+      if (_loadedCount === 0) $('#load-status').text('no ' + txt + ' found');
+    }
+  });
+}
+
+function format_time(time_value) {
+  var values = time_value.split(' ');
+  time_value = values[1] + ' ' + values[2] + ', ' + values[5];
+  return time_value;
+}
+
+function changeUser() {
+  //reset UI
+  event.preventDefault();
+  $('#input-form').show();
+  $('#user-profile').hide();
+  $('#view-menu').hide();
+  $('#profile-img').hide();
+  $('#input-name').val('');
+  $('#results ul').empty();
+  $('#replies').prop('checked', false);
+  $('#retweets').prop('checked', false);
+  $('.intro').show();
+  $('#user-status').css('visibility', 'hidden');
+  if (_req) _req.abort();
+}
